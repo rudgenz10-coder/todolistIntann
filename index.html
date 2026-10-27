@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#800020" />
+  <title>Intann — To-Do List</title>
+
+  <!-- Pasang tema lebih awal agar tidak berkedip saat halaman dimuat -->
+  <script>
+    (function () {
+      try {
+        var saved = JSON.parse(localStorage.getItem('maroon-todo:pref:theme'));
+        var dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (dark) {
+          document.documentElement.classList.add('dark');
+          var m = document.querySelector('meta[name="theme-color"]');
+          if (m) m.setAttribute('content', '#170b0e');
+        }
+      } catch (e) {}
+    })();
+  </script>
+
+  <!-- Tailwind CSS (CDN) + konfigurasi tema -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            maroon: { DEFAULT: '#800020', dark: '#5f0018', light: '#a3294a' },
+          },
+          fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
+          boxShadow: { soft: '0 8px 30px rgba(128, 0, 32, 0.08)' },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    [x-cloak] { display: none !important; }
+    html.dark { color-scheme: dark; }
+    /* Hero video: mentok atas, lebar penuh, hampir setengah tinggi layar */
+    .hero { height: 45vh; height: 45svh; min-height: 260px; max-height: 560px; }
+    /* Tepi atas & bawah video memudar ke warna halaman (lapisan gradasi biasa, ringan untuk WebView). */
+    :root { --page-bg: 255,247,247; }
+    html.dark { --page-bg: 23,11,14; }
+    .hero-fade { --fade-top: 10%; --fade-bottom: 14%; }
+    .hero-fade-top { height: var(--fade-top); background: linear-gradient(to bottom, rgb(var(--page-bg)), rgba(var(--page-bg), 0)); }
+    .hero-fade-bottom { height: var(--fade-bottom); background: linear-gradient(to top, rgb(var(--page-bg)), rgba(var(--page-bg), 0)); }
+    @keyframes heartUp {
+      0% { transform: translateY(0) scale(.6); opacity: 0; }
+      12% { opacity: .95; }
+      100% { transform: translateY(-90vh) scale(1.15) rotate(12deg); opacity: 0; }
+    }
+    .heart-float { animation-name: heartUp; animation-timing-function: ease-out; animation-fill-mode: both; opacity: 0; }
+    @media (prefers-reduced-motion: reduce) { .heart-float { display: none; } }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    .task-enter { animation: slideIn .25s ease-out; }
+  </style>
+
+  <!-- Penangkap error: tampil di layar (Acode/WebView tidak punya console) -->
+  <script>
+    window.__bootErrors = [];
+    (function () {
+      function add(m) {
+        try { window.__bootErrors.push(String(m).slice(0, 300)); if (window.__showBootPanel) window.__showBootPanel(); } catch (e) {}
+      }
+      window.addEventListener('error', function (e) {
+        if (e && e.target && e.target !== window) return; // gagal muat resource biasa (gambar/video) diabaikan
+        add((e && e.message) || 'Error tidak dikenal');
+      });
+      window.addEventListener('unhandledrejection', function (e) { add('Promise: ' + ((e && e.reason && e.reason.message) || (e && e.reason) || '')); });
+      var ce = console.error;
+      console.error = function () {
+        try { var m = Array.prototype.join.call(arguments, ' '); if (/alpine/i.test(m)) add(m); } catch (x) {}
+        if (ce) ce.apply(console, arguments);
+      };
+    })();
+  </script>
+
+  <!-- Urutan penting: database & controller dimuat sebelum Alpine -->
+  <script src="database.js"></script>
+  <script src="appcontroller.js"></script>
+</head>
+
+<body class="bg-[#fff7f7] dark:bg-[#170b0e] text-stone-800 dark:text-stone-100 font-sans antialiased min-h-screen">
+  <div x-data="todoApp()" x-cloak @keydown.escape.window="formModalOpen ? closeForm() : closeDay()" @keydown.window="onKey($event)" class="w-full">
+
+    <!-- Header di atas video -->
+    <div class="mx-auto w-full max-w-3xl px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))] sm:pb-4 sm:pt-6">
+    <header>
+      <div>
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex min-w-0 items-center gap-3">
+          <div class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-maroon dark:bg-[#9a1f3d] text-white shadow-soft">
+            <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div class="min-w-0">
+            <h1 class="truncate text-xl font-bold tracking-tight text-maroon dark:text-rose-300 sm:text-3xl">Intann</h1>
+            <p class="flex items-center gap-1.5 text-sm text-stone-500 dark:text-stone-400"><svg class="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z" /></svg><span class="truncate" x-text="greeting"></span></p>
+          </div>
+        </div>
+        <!-- Tema, pengingat, menu data -->
+        <div class="flex shrink-0 items-center gap-1.5">
+          <button type="button" @click="toggleDark()" :aria-pressed="dark" :title="dark ? 'Ganti ke mode terang' : 'Ganti ke mode gelap'" aria-label="Ganti tema"
+                  class="grid h-10 w-10 place-items-center rounded-xl shadow-soft ring-1 transition focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60 bg-white dark:bg-[#241216] text-maroon dark:text-rose-300 ring-rose-100 dark:ring-[#45222a] hover:bg-rose-100 dark:hover:bg-[#45222a]">
+            <svg x-show="!dark" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" /></svg>
+            <svg x-show="dark" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>
+          </button>
+          <button type="button" @click="toggleReminders()" :aria-pressed="remindersOn" :title="remindersOn ? 'Pengingat aktif (klik untuk mematikan)' : 'Aktifkan pengingat jam tugas'" aria-label="Pengingat tugas"
+                  class="relative grid h-10 w-10 place-items-center rounded-xl shadow-soft ring-1 transition focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60"
+                  :class="remindersOn ? 'bg-maroon dark:bg-[#9a1f3d] text-white ring-maroon dark:ring-rose-400' : 'bg-white dark:bg-[#241216] text-maroon dark:text-rose-300 ring-rose-100 dark:ring-[#45222a] hover:bg-rose-100 dark:hover:bg-[#45222a]'">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" /></svg>
+            <span x-show="remindersOn" class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-white dark:ring-[#241216]"></span>
+          </button>
+          <div class="relative" @click.outside="menuOpen = false">
+            <button type="button" @click="menuOpen = !menuOpen" :aria-expanded="menuOpen" aria-haspopup="menu" title="Data" aria-label="Menu data"
+                    class="grid h-10 w-10 place-items-center rounded-xl shadow-soft ring-1 transition focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60 bg-white dark:bg-[#241216] text-maroon dark:text-rose-300 ring-rose-100 dark:ring-[#45222a] hover:bg-rose-100 dark:hover:bg-[#45222a]">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 12.75a.75.75 0 110-1.5.75.75 0 010 1.5zM12 18.75a.75.75 0 110-1.5.75.75 0 010 1.5z" /></svg>
+            </button>
+            <div x-show="menuOpen" x-transition.opacity style="display:none" role="menu"
+                 class="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-2xl bg-white dark:bg-[#241216] py-1.5 shadow-2xl ring-1 ring-rose-100 dark:ring-[#45222a]">
+              <button type="button" role="menuitem" @click="exportData(); menuOpen = false"
+                      class="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-stone-700 dark:text-stone-200 transition hover:bg-rose-50 dark:hover:bg-[#331a1f]">
+                <svg class="h-5 w-5 text-maroon dark:text-rose-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                Ekspor data (JSON)
+              </button>
+              <button type="button" role="menuitem" @click="$refs.importInput.click(); menuOpen = false"
+                      class="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-stone-700 dark:text-stone-200 transition hover:bg-rose-50 dark:hover:bg-[#331a1f]">
+                <svg class="h-5 w-5 text-maroon dark:text-rose-300" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
+                Impor data
+              </button>
+            </div>
+          </div>
+          <input type="file" accept="application/json,.json" x-ref="importInput" class="hidden" @change="importData($event)" />
+        </div>
+      </div>
+      </div>
+    </header>
+    </div>
+
+    <!-- HERO: video lebar penuh; tepi atas & bawah memudar menyatu dengan halaman -->
+    <section aria-label="Banner" class="hero relative isolate w-full">
+      <div class="hero-fade absolute inset-0 overflow-hidden bg-gradient-to-br from-rose-200 dark:from-[#5a2c36] to-rose-100 dark:to-[#45222a]">
+        <video x-ref="heroVideo" :src="hero.videoSrc" :poster="hero.poster || null"
+               class="absolute inset-0 h-full w-full object-cover"
+               autoplay muted loop playsinline preload="metadata" disablepictureinpicture
+               @error="$el.style.display = 'none'"></video>
+        <div class="hero-fade-top pointer-events-none absolute inset-x-0 top-0"></div>
+        <div class="hero-fade-bottom pointer-events-none absolute inset-x-0 bottom-0"></div>
+      </div>
+
+      <!-- Suara video -->
+      <button type="button" x-show="hero.videoSrc" @click="toggleMute()" :aria-pressed="!videoMuted" :title="videoMuted ? 'Nyalakan suara' : 'Matikan suara'" aria-label="Suara video"
+              class="absolute bottom-10 right-4 z-10 grid h-9 w-9 place-items-center rounded-full bg-white/80 dark:bg-[#241216]/80 text-maroon dark:text-rose-300 shadow transition hover:bg-white dark:hover:bg-[#331a1f]">
+        <svg x-show="videoMuted" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25m-10.5-6l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" /></svg>
+        <svg x-show="!videoMuted" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M19.114 5.636a9 9 0 010 12.728M16.463 8.288a5.25 5.25 0 010 7.424M6.75 8.25l4.72-4.72a.75.75 0 011.28.53v15.88a.75.75 0 01-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.01 9.01 0 012.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75z" /></svg>
+      </button>
+    </section>
+
+    <div class="mx-auto w-full max-w-3xl px-4 pb-8 pt-1 sm:pb-12">
+
+    <main class="space-y-5">
+
+      <!-- Pesan manis harian -->
+      <section x-show="dailyMessage" aria-label="Pesan hari ini" class="relative overflow-hidden rounded-2xl bg-gradient-to-br from-rose-100 dark:from-[#45222a] to-white dark:to-[#241216] p-5 shadow-soft ring-1 ring-rose-100 dark:ring-[#45222a]">
+        <svg class="pointer-events-none absolute -right-3 -top-3 h-24 w-24 text-rose-200/70 dark:text-rose-300/10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z" /></svg>
+        <p class="relative flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-maroon dark:text-rose-300">
+          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z" /></svg>
+          Pesan hari ini
+        </p>
+        <p class="relative mt-2 text-sm leading-relaxed text-stone-700 dark:text-stone-200 sm:text-base" x-text="dailyMessage"></p>
+        <p class="relative mt-2 text-right text-xs font-semibold text-maroon dark:text-rose-300" x-text="'— ' + couple.fromName"></p>
+      </section>
+
+      <!-- Hari spesial -->
+      <section x-show="upcomingSpecials.length > 0 || togetherDays !== null" aria-label="Hari spesial" class="rounded-2xl bg-white dark:bg-[#241216] p-5 shadow-soft ring-1 ring-rose-100 dark:ring-[#45222a]">
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <h2 class="flex items-center gap-2 text-base font-semibold text-stone-800 dark:text-stone-100">
+            <span class="grid h-9 w-9 place-items-center rounded-xl bg-rose-100 dark:bg-[#45222a] text-maroon dark:text-rose-300">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 11.25v8.25a1.5 1.5 0 01-1.5 1.5H5.25a1.5 1.5 0 01-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 109.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1114.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
+            </span>
+            Hari Spesial
+          </h2>
+          <p x-show="togetherDays !== null" class="shrink-0 text-right text-xs text-stone-500 dark:text-stone-400"><span class="block text-lg font-bold leading-none text-maroon dark:text-rose-300" x-text="togetherDaysText"></span>hari bersama</p>
+        </div>
+        <ul class="space-y-2">
+          <template x-for="s in upcomingSpecials" :key="s.key">
+            <li class="flex items-center gap-3 rounded-xl bg-rose-50 dark:bg-[#331a1f] px-3 py-2.5">
+              <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg" :class="s.daysLeft === 0 ? 'bg-maroon dark:bg-[#9a1f3d] text-white' : 'bg-rose-100 dark:bg-[#45222a] text-maroon dark:text-rose-300'">
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z" /></svg>
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-semibold text-stone-800 dark:text-stone-100" x-text="s.title + (s.ordinal ? ' ke-' + s.ordinal : '')"></p>
+                <p class="truncate text-xs text-stone-500 dark:text-stone-400" x-text="formatDateLong(s.iso)"></p>
+              </div>
+              <span class="shrink-0 rounded-full px-2.5 py-1 text-xs font-bold"
+                    :class="s.daysLeft === 0 ? 'bg-maroon dark:bg-[#9a1f3d] text-white' : (s.daysLeft <= 7 ? 'bg-amber-100 dark:bg-amber-500/20 dark:text-amber-300 text-amber-800' : 'bg-white dark:bg-[#241216] text-maroon dark:text-rose-300 ring-1 ring-rose-200 dark:ring-[#5a2c36]')"
+                    x-text="specialLabel(s)"></span>
+            </li>
+          </template>
+        </ul>
+        <p x-show="upcomingSpecials.length === 0" class="text-sm text-stone-500 dark:text-stone-400">Belum ada hari spesial mendatang.</p>
+
+        <div class="mt-3 flex items-center justify-between gap-2">
+          <button type="button" @click="specialsOpen = !specialsOpen"
+                  class="rounded-xl px-3 py-2 text-xs font-semibold text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a]"
+                  x-text="specialsOpen ? 'Tutup' : 'Kelola hari spesial'"></button>
+          <button type="button" x-show="specialsOpen" @click="openSpecialForm()"
+                  class="rounded-xl bg-maroon dark:bg-[#9a1f3d] px-3 py-2 text-xs font-semibold text-white transition hover:bg-maroon-dark dark:hover:bg-[#b3264a]">+ Tambah</button>
+        </div>
+
+        <div x-show="specialsOpen" style="display:none" class="mt-2 space-y-3 border-t border-rose-100 dark:border-[#45222a] pt-3">
+          <ul class="space-y-2">
+            <template x-for="s in specialsManage" :key="s.id">
+              <li class="flex items-center gap-2 rounded-xl bg-rose-50 dark:bg-[#331a1f] px-3 py-2">
+                <div class="min-w-0 flex-1">
+                  <p class="truncate text-sm font-semibold text-stone-800 dark:text-stone-100" x-text="s.title"></p>
+                  <p class="truncate text-xs text-stone-500 dark:text-stone-400" x-text="formatDateShort(s.date) + (s.yearly ? ' · tiap tahun' : ' · sekali' ) + (s.past ? ' · sudah lewat' : '')"></p>
+                </div>
+                <span x-show="s.locked" class="shrink-0 rounded-full bg-rose-100 dark:bg-[#45222a] px-2 py-1 text-[11px] font-semibold text-maroon dark:text-rose-300">Tetap</span>
+                <button type="button" x-show="!s.locked" @click="openSpecialForm(s)" aria-label="Edit hari spesial"
+                        class="rounded-lg px-2 py-1 text-xs font-semibold text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a]">Edit</button>
+                <button type="button" x-show="!s.locked" @click="removeSpecial(s)" aria-label="Hapus hari spesial"
+                        class="rounded-lg px-2 py-1 text-xs font-semibold text-red-600 dark:text-red-400 transition hover:bg-rose-100 dark:hover:bg-[#45222a]">Hapus</button>
+              </li>
+            </template>
+          </ul>
+
+          <form @submit.prevent="submitSpecial()" x-show="specialFormOpen" style="display:none" class="space-y-2 rounded-xl bg-rose-50/70 dark:bg-[#331a1f]/70 p-3">
+            <input type="text" x-model="specialForm.title" maxlength="60" placeholder="Nama hari spesial" aria-label="Nama hari spesial"
+                   class="w-full rounded-xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#170b0e] px-3 py-2 text-sm text-stone-800 dark:text-stone-100 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60" />
+            <input type="date" x-model="specialForm.date" aria-label="Tanggal"
+                   class="w-full rounded-xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#170b0e] px-3 py-2 text-sm text-stone-800 dark:text-stone-100 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60" />
+            <label class="flex items-center gap-2 text-xs text-stone-600 dark:text-stone-300">
+              <input type="checkbox" x-model="specialForm.yearly" class="h-4 w-4 rounded border-rose-300 text-maroon focus:ring-maroon" />
+              Ulangi setiap tahun
+            </label>
+            <p x-show="specialError" class="text-xs font-medium text-red-600 dark:text-red-400" x-text="specialError"></p>
+            <div class="flex gap-2">
+              <button type="submit" class="rounded-xl bg-maroon dark:bg-[#9a1f3d] px-4 py-2 text-xs font-semibold text-white transition hover:bg-maroon-dark dark:hover:bg-[#b3264a]" x-text="specialForm.id ? 'Simpan perubahan' : 'Simpan'"></button>
+              <button type="button" @click="cancelSpecialForm()" class="rounded-xl px-4 py-2 text-xs font-semibold text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a]">Batal</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- Statistik -->
+      <section aria-label="Statistik" class="rounded-2xl bg-white dark:bg-[#241216] p-5 shadow-soft ring-1 ring-rose-100 dark:ring-[#45222a]">
+        <div class="grid grid-cols-3 gap-3 text-center">
+          <div class="rounded-2xl bg-rose-50 dark:bg-[#331a1f] px-2 py-3">
+            <p class="text-2xl font-bold text-maroon dark:text-rose-300" x-text="total"></p>
+            <p class="text-xs font-medium text-stone-500 dark:text-stone-400">Total</p>
+          </div>
+          <div class="rounded-2xl bg-rose-50 dark:bg-[#331a1f] px-2 py-3">
+            <p class="text-2xl font-bold text-maroon dark:text-rose-300" x-text="completedCount"></p>
+            <p class="text-xs font-medium text-stone-500 dark:text-stone-400">Selesai</p>
+          </div>
+          <div class="rounded-2xl bg-rose-50 dark:bg-[#331a1f] px-2 py-3">
+            <p class="text-2xl font-bold text-maroon dark:text-rose-300" x-text="activeCount"></p>
+            <p class="text-xs font-medium text-stone-500 dark:text-stone-400">Tersisa</p>
+          </div>
+        </div>
+        <div class="mt-4">
+          <div class="mb-1.5 flex items-center justify-between text-sm">
+            <span class="font-medium text-stone-600 dark:text-stone-300">Progres</span>
+            <span class="font-semibold text-maroon dark:text-rose-300" x-text="progress + '%'"></span>
+          </div>
+          <div class="h-3 w-full overflow-hidden rounded-full bg-rose-100 dark:bg-[#45222a]" role="progressbar"
+               :aria-valuenow="progress" aria-valuemin="0" aria-valuemax="100">
+            <div class="h-full rounded-full bg-gradient-to-r from-maroon-light dark:from-[#c2395a] to-maroon dark:to-[#9a1f3d] transition-all duration-500 ease-out"
+                 :style="`width: ${progress}%`"></div>
+          </div>
+        </div>
+
+        <!-- Produktivitas: streak & grafik 7 hari -->
+        <div class="mt-5 border-t border-rose-100 dark:border-[#45222a] pt-4">
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <div class="flex min-w-0 items-center gap-2.5">
+              <span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl"
+                    :class="streak > 0 ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'bg-rose-100 dark:bg-[#45222a] text-maroon/60 dark:text-rose-300/60'">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.362 5.214A8.252 8.252 0 0112 21 8.25 8.25 0 016.038 7.048 8.287 8.287 0 009 9.6a8.983 8.983 0 013.361-6.867 8.21 8.21 0 003 2.48z" /><path stroke-linecap="round" stroke-linejoin="round" d="M12 18a3.75 3.75 0 00.495-7.467 5.99 5.99 0 00-1.925 3.546 5.974 5.974 0 01-2.133-1A3.75 3.75 0 0012 18z" /></svg>
+              </span>
+              <div class="min-w-0">
+                <p class="text-sm font-semibold text-stone-800 dark:text-stone-100"><span x-text="streak"></span> hari beruntun</p>
+                <p class="truncate text-xs text-stone-500 dark:text-stone-400">Selesaikan 1 tugas tiap hari</p>
+              </div>
+            </div>
+            <p class="shrink-0 text-right text-xs text-stone-500 dark:text-stone-400"><span class="block text-lg font-bold leading-none text-maroon dark:text-rose-300" x-text="weekTotal"></span>selesai minggu ini</p>
+          </div>
+          <div class="flex h-28 items-end justify-between gap-2" role="img" aria-label="Grafik tugas selesai 7 hari terakhir">
+            <template x-for="d in weekStats" :key="d.date">
+              <div class="flex flex-1 flex-col items-center justify-end gap-1">
+                <span class="h-4 text-[10px] font-semibold text-stone-500 dark:text-stone-400" x-text="d.count || ''"></span>
+                <div class="w-full max-w-[2.25rem] rounded-t-lg transition-all duration-500" :style="`height: ${d.h}px`"
+                     :class="d.count ? (d.isToday ? 'bg-maroon dark:bg-[#9a1f3d]' : 'bg-rose-300 dark:bg-[#7a3344]') : 'bg-rose-100 dark:bg-[#45222a]'"></div>
+                <span class="text-[10px] font-medium" :class="d.isToday ? 'text-maroon dark:text-rose-300' : 'text-stone-400 dark:text-stone-500'" x-text="d.label"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </section>
+
+      <!-- Agenda -->
+      <section aria-label="Agenda" class="grid grid-cols-2 gap-3">
+        <button type="button" @click="setQuick('today')" :aria-pressed="quick === 'today'"
+                class="flex items-center gap-3 rounded-2xl bg-white dark:bg-[#241216] p-4 text-left shadow-soft transition hover:-translate-y-0.5 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60"
+                :class="quick === 'today' ? 'ring-2 ring-maroon dark:ring-rose-400' : 'ring-1 ring-rose-100 dark:ring-[#45222a]'">
+          <span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-rose-100 dark:bg-[#45222a] text-maroon dark:text-rose-300">
+            <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>
+          </span>
+          <span class="min-w-0">
+            <span class="block text-2xl font-bold leading-none text-maroon dark:text-rose-300" x-text="todayCount"></span>
+            <span class="mt-1 block truncate text-xs font-medium text-stone-500 dark:text-stone-400">Tugas hari ini</span>
+          </span>
+        </button>
+        <button type="button" @click="setQuick('overdue')" :aria-pressed="quick === 'overdue'"
+                class="flex items-center gap-3 rounded-2xl bg-white dark:bg-[#241216] p-4 text-left shadow-soft transition hover:-translate-y-0.5 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60"
+                :class="quick === 'overdue' ? 'ring-2 ring-maroon dark:ring-rose-400' : 'ring-1 ring-rose-100 dark:ring-[#45222a]'">
+          <span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl"
+                :class="overdueCount > 0 ? 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-400' : 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'">
+            <svg class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.008v.008H12v-.008z" /></svg>
+          </span>
+          <span class="min-w-0">
+            <span class="block text-2xl font-bold leading-none" :class="overdueCount > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'" x-text="overdueCount"></span>
+            <span class="mt-1 block truncate text-xs font-medium text-stone-500 dark:text-stone-400">Terlambat</span>
+          </span>
+        </button>
+      </section>
+
+      <!-- Kalender -->
+      <section aria-label="Kalender tugas" class="rounded-2xl bg-white dark:bg-[#241216] p-4 shadow-soft ring-1 ring-rose-100 dark:ring-[#45222a] sm:p-5">
+        <!-- Header kalender -->
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-rose-100 dark:bg-[#45222a] text-maroon dark:text-rose-300">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>
+            </div>
+            <div class="min-w-0">
+              <h2 class="truncate text-base font-semibold capitalize text-stone-800 dark:text-stone-100 sm:text-lg" x-text="monthLabel"></h2>
+              <p class="text-xs text-stone-500 dark:text-stone-400">Klik tanggal untuk melihat tugas<span class="hidden sm:inline"> · seret tugas dari daftar ke tanggal untuk memindahkan</span></p>
+            </div>
+          </div>
+          <button type="button" @click="openAddForm()"
+                  class="inline-flex shrink-0 items-center gap-1.5 rounded-2xl bg-maroon dark:bg-[#9a1f3d] px-3.5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:bg-maroon-dark dark:hover:bg-[#b3264a] focus:outline-none focus:ring-4 focus:ring-rose-200 dark:focus:ring-[#5a2c36] active:scale-[.98] sm:px-4">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+            <span class="hidden sm:inline">Tambah Tugas</span>
+            <span class="sm:hidden">Tambah</span>
+          </button>
+        </div>
+
+        <!-- Navigasi bulan -->
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <button type="button" @click="prevMonth()" aria-label="Bulan sebelumnya"
+                  class="grid h-9 w-9 place-items-center rounded-xl bg-rose-50 dark:bg-[#331a1f] text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a]">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>
+          </button>
+          <button type="button" @click="goToday()" :disabled="isCurrentMonth"
+                  class="inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a] disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            Bulan Ini
+          </button>
+          <button type="button" @click="nextMonth()" aria-label="Bulan berikutnya"
+                  class="grid h-9 w-9 place-items-center rounded-xl bg-rose-50 dark:bg-[#331a1f] text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a]">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>
+          </button>
+        </div>
+
+        <!-- Nama hari -->
+        <div class="mb-1 grid grid-cols-7 gap-1 text-center sm:gap-1.5">
+          <template x-for="(w, i) in weekdays" :key="w">
+            <div class="py-1 text-[11px] font-semibold uppercase tracking-wide sm:text-xs"
+                 :class="i === 6 ? 'text-rose-700 dark:text-rose-400' : 'text-stone-400 dark:text-stone-500'" x-text="w"></div>
+          </template>
+        </div>
+
+        <!-- Grid tanggal -->
+        <div class="grid grid-cols-7 gap-1 sm:gap-1.5">
+          <template x-for="cell in calendarCells" :key="cell.key">
+            <div class="aspect-square rounded-xl transition" :class="dragOverDate === cell.date ? 'ring-2 ring-maroon dark:ring-rose-400 bg-rose-100 dark:bg-[#45222a]' : ''" @dragover.prevent="cell.date && (dragOverDate = cell.date)" @dragleave="dragOverDate === cell.date && (dragOverDate = null)" @drop.prevent="dropOn(cell.date)">
+              <button type="button" x-show="cell.date" @click="openDay(cell.date)"
+                      :aria-label="formatDateLong(cell.date) + (cell.count ? ', ' + cell.count + ' tugas' : '')"
+                      class="relative flex h-full w-full flex-col items-center justify-center gap-0.5 rounded-xl border text-sm font-medium transition hover:-translate-y-0.5 hover:border-maroon dark:hover:border-rose-400 hover:shadow-soft focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60"
+                      :class="cell.isToday ? 'border-maroon dark:border-rose-400 bg-rose-50 dark:bg-[#331a1f]' : (cell.count ? 'border-rose-200 dark:border-[#5a2c36] bg-rose-50/60 dark:bg-[#331a1f]/60' : 'border-transparent bg-stone-50/70 dark:bg-[#241216]/70 hover:bg-rose-50 dark:hover:bg-[#331a1f]')">
+                <span class="grid h-6 w-6 place-items-center rounded-full text-xs sm:h-7 sm:w-7 sm:text-sm"
+                      :class="cell.isToday ? 'bg-maroon dark:bg-[#9a1f3d] font-bold text-white' : 'text-stone-700 dark:text-stone-200'"
+                      x-text="cell.day"></span>
+                <svg x-show="cell.special && cell.special.length" class="absolute right-1 top-1 h-3 w-3 text-rose-500" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z" /></svg>
+                <!-- Penanda tugas -->
+                <span class="flex h-2 items-center gap-0.5">
+                  <template x-if="cell.allDone">
+                    <svg class="h-3 w-3 text-emerald-500" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  </template>
+                  <template x-if="!cell.allDone">
+                    <span class="flex items-center gap-0.5">
+                      <template x-for="(t, i) in cell.dots" :key="t.id">
+                        <span class="h-1.5 w-1.5 rounded-full sm:h-2 sm:w-2" :class="[priorityBar(t.priority), t.completed ? 'opacity-30' : '']"></span>
+                      </template>
+                      <span x-show="cell.more > 0" class="text-[9px] font-bold leading-none text-maroon dark:text-rose-300" x-text="'+' + cell.more"></span>
+                    </span>
+                  </template>
+                </span>
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <!-- Legenda -->
+        <div class="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 border-t border-rose-100 dark:border-[#45222a] pt-3 text-[11px] text-stone-500 dark:text-stone-400">
+          <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-rose-900 dark:bg-rose-500"></span>High</span>
+          <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-amber-400"></span>Medium</span>
+          <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-emerald-400"></span>Low</span>
+          <span class="inline-flex items-center gap-1.5"><span class="grid h-4 w-4 place-items-center rounded-full bg-maroon dark:bg-[#9a1f3d] text-[8px] font-bold text-white">1</span>Hari ini</span>
+        </div>
+      </section>
+
+      <!-- Search & Filter -->
+      <section aria-label="Pencarian dan filter" class="space-y-3">
+        <div class="relative">
+          <svg class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-stone-400 dark:text-stone-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" />
+          </svg>
+          <label for="search" class="sr-only">Cari tugas</label>
+          <input id="search" type="search" x-model="search" placeholder="Cari judul, catatan, atau kategori..."
+                 class="w-full rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm shadow-soft placeholder:text-stone-400 dark:placeholder:text-stone-500 transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60" />
+        </div>
+
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex flex-1 gap-1.5 overflow-x-auto rounded-2xl bg-rose-100/70 dark:bg-[#45222a]/70 p-1.5" role="tablist">
+            <template x-for="f in filters" :key="f.value">
+              <button type="button" role="tab" @click="filter = f.value" :aria-selected="filter === f.value"
+                      class="flex-1 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition sm:text-sm"
+                      :class="filter === f.value ? 'bg-maroon dark:bg-[#9a1f3d] text-white shadow-soft' : 'text-maroon dark:text-rose-300 hover:bg-rose-200 dark:hover:bg-[#5a2c36]'"
+                      x-text="f.label"></button>
+            </template>
+          </div>
+          <button type="button" @click="clearCompleted()" x-show="completedCount > 0"
+                  class="shrink-0 rounded-2xl px-3 py-2 text-xs font-semibold text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a]"
+                  title="Hapus semua tugas selesai">
+            Bersihkan
+          </button>
+        </div>
+
+        <!-- Chip filter aktif & kategori -->
+        <div x-show="categories.length > 0 || quick !== 'all'" class="flex flex-wrap items-center gap-1.5">
+          <template x-if="quick !== 'all'">
+            <button type="button" @click="quick = 'all'"
+                    class="inline-flex items-center gap-1 rounded-full bg-maroon dark:bg-[#9a1f3d] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-maroon-dark dark:hover:bg-[#b3264a]">
+              <span x-text="quick === 'today' ? 'Hari ini' : 'Terlambat'"></span>
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+          </template>
+          <template x-for="c in categories" :key="c">
+            <button type="button" @click="categoryFilter = activeCategory === c ? '' : c"
+                    class="rounded-full px-3 py-1.5 text-xs font-medium ring-1 transition"
+                    :class="activeCategory === c ? 'bg-maroon dark:bg-[#9a1f3d] text-white ring-maroon dark:ring-rose-400' : 'bg-white dark:bg-[#241216] text-maroon dark:text-rose-300 ring-rose-200 dark:ring-[#5a2c36] hover:bg-rose-100 dark:hover:bg-[#45222a]'"
+                    x-text="c"></button>
+          </template>
+        </div>
+      </section>
+
+      <!-- Daftar Tugas -->
+      <section aria-label="Daftar tugas" id="daftar-tugas" class="scroll-mt-4">
+        <ul class="space-y-3">
+          <template x-for="task in filteredTasks" :key="task.id">
+            <li :data-task-id="task.id" :class="dragTaskId === task.id ? 'opacity-50' : ''" class="group relative flex items-center gap-3 overflow-hidden rounded-2xl bg-white dark:bg-[#241216] p-4 pl-5 shadow-soft ring-1 ring-rose-100 dark:ring-[#45222a] transition hover:-translate-y-0.5 hover:ring-rose-200 dark:hover:ring-[#5a2c36]">
+              <span class="absolute inset-y-0 left-0 w-1.5" :class="priorityBar(task.priority)"></span>
+
+              <!-- Pegangan seret (desktop) -->
+              <span draggable="true" @dragstart="startDrag(task, $event)" @dragend="endDrag()" title="Seret ke tanggal di kalender" aria-hidden="true"
+                    class="-ml-2 hidden shrink-0 cursor-grab select-none text-stone-300 dark:text-stone-600 transition hover:text-maroon dark:hover:text-rose-300 active:cursor-grabbing sm:block">
+                <svg class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg>
+              </span>
+
+              <!-- Checkbox -->
+              <button type="button" @click="toggle(task)" :aria-pressed="task.completed"
+                      :aria-label="task.completed ? 'Tandai belum selesai' : 'Tandai selesai'"
+                      class="grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60"
+                      :class="task.completed ? 'border-maroon dark:border-rose-400 bg-maroon dark:bg-[#9a1f3d] text-white' : 'border-rose-300 hover:border-maroon dark:hover:border-rose-400'">
+                <svg x-show="task.completed" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </button>
+
+              <!-- Konten -->
+              <div class="min-w-0 flex-1">
+                <p class="break-words text-sm font-medium transition sm:text-base"
+                   :class="task.completed ? 'text-stone-400 dark:text-stone-500 line-through' : 'text-stone-800 dark:text-stone-100'"
+                   x-text="task.title"></p>
+                <p x-show="task.notes" class="mt-0.5 line-clamp-2 break-words text-xs text-stone-500 dark:text-stone-400" x-text="task.notes"></p>
+                <ul x-show="task.subtasks && task.subtasks.length" class="mt-2 space-y-1">
+                  <template x-for="s in task.subtasks" :key="s.id">
+                    <li>
+                      <button type="button" @click="toggleSub(task, s)" :aria-pressed="s.done"
+                              class="flex w-full items-start gap-2 text-left text-xs transition"
+                              :class="s.done ? 'text-stone-400 dark:text-stone-500' : 'text-stone-600 dark:text-stone-300'">
+                        <span class="mt-px grid h-4 w-4 shrink-0 place-items-center rounded-full border-2 transition"
+                              :class="s.done ? 'border-maroon dark:border-rose-400 bg-maroon dark:bg-[#9a1f3d] text-white' : 'border-rose-300 bg-white dark:bg-[#241216]'">
+                          <svg x-show="s.done" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="3.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        </span>
+                        <span class="min-w-0 break-words" :class="s.done ? 'line-through' : ''" x-text="s.title"></span>
+                      </button>
+                    </li>
+                  </template>
+                </ul>
+                <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  <span class="rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
+                        :class="priorityBadge(task.priority)" x-text="priorityLabel(task.priority)"></span>
+                  <span class="inline-flex items-center gap-1 rounded-full bg-rose-100 dark:bg-[#45222a] px-2.5 py-0.5 text-[11px] font-medium text-maroon dark:text-rose-300">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" /><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z" /></svg>
+                    <span x-text="task.category"></span>
+                  </span>
+                  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium"
+                        :class="isOverdue(task) ? 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-300' : 'bg-stone-100 dark:bg-[#3a1f26] text-stone-600 dark:text-stone-300'">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>
+                    <span x-text="formatDateShort(task.dueDate) + (task.time ? ' · ' + task.time : '') + (isOverdue(task) ? ' · Terlambat' : '')"></span>
+                  </span>
+                  <span x-show="task.repeat && task.repeat !== 'none'" class="inline-flex items-center gap-1 rounded-full bg-rose-100 dark:bg-[#45222a] px-2.5 py-0.5 text-[11px] font-medium text-maroon dark:text-rose-300">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                    <span x-text="repeatLabel(task.repeat)"></span>
+                  </span>
+                  <span x-show="task.subtasks && task.subtasks.length" class="inline-flex items-center gap-1 rounded-full bg-rose-100 dark:bg-[#45222a] px-2.5 py-0.5 text-[11px] font-medium text-maroon dark:text-rose-300">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <span x-text="subDone(task) + '/' + task.subtasks.length"></span>
+                  </span>
+                </div>
+              </div>
+
+              <!-- Aksi -->
+              <div class="flex shrink-0 items-center gap-1">
+                <button type="button" x-show="!task.completed" @click="snooze(task)" aria-label="Tunda ke besok" title="Tunda ke besok"
+                        class="rounded-xl p-2 text-stone-400 dark:text-stone-500 transition hover:bg-rose-100 dark:hover:bg-[#45222a] hover:text-maroon dark:hover:text-rose-300 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60">
+                  <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 010 1.954l-7.108 4.061A1.125 1.125 0 013 16.811V8.69zM12.75 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 010 1.954l-7.108 4.061a1.125 1.125 0 01-1.683-.977V8.689z" /></svg>
+                </button>
+                <button type="button" @click="startEdit(task)" aria-label="Edit tugas"
+                        class="rounded-xl p-2 text-stone-400 dark:text-stone-500 transition hover:bg-rose-100 dark:hover:bg-[#45222a] hover:text-maroon dark:hover:text-rose-300 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60">
+                  <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                  </svg>
+                </button>
+                <button type="button" @click="remove(task)" aria-label="Hapus tugas"
+                        class="rounded-xl p-2 text-stone-400 dark:text-stone-500 transition hover:bg-rose-100 dark:hover:bg-[#45222a] hover:text-red-600 dark:hover:text-red-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60">
+                  <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                  </svg>
+                </button>
+              </div>
+            </li>
+          </template>
+        </ul>
+
+        <!-- Empty State -->
+        <div x-show="filteredTasks.length === 0" class="task-enter rounded-2xl border-2 border-dashed border-rose-200 dark:border-[#5a2c36] bg-white/70 dark:bg-[#241216]/70 px-6 py-12 text-center">
+          <div class="mx-auto mb-4 grid h-16 w-16 place-items-center rounded-full bg-rose-100 dark:bg-[#45222a] text-maroon dark:text-rose-300">
+            <svg class="h-8 w-8" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-maroon dark:text-rose-300" x-text="emptyState().title"></h3>
+          <p class="mx-auto mt-1 max-w-xs text-sm text-stone-500 dark:text-stone-400" x-text="emptyState().text"></p>
+          <button type="button" x-show="total === 0" @click="openAddForm()"
+                  class="mt-5 rounded-2xl bg-maroon dark:bg-[#9a1f3d] px-5 py-2.5 text-sm font-semibold text-white shadow-soft transition hover:bg-maroon-dark dark:hover:bg-[#b3264a] active:scale-[.98]">
+            Tambah Tugas Pertama
+          </button>
+          <button type="button" x-show="total > 0 && hasActiveFilters" @click="resetFilters()"
+                  class="mt-5 rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] px-5 py-2.5 text-sm font-semibold text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a]">
+            Reset filter
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Modal: Tugas pada tanggal terpilih -->
+    <div x-show="dayModalOpen" x-transition.opacity style="display:none"
+         class="fixed inset-0 z-40 flex items-end justify-center bg-stone-900/40 sm:items-center sm:p-4"
+         @click.self="closeDay()" role="dialog" aria-modal="true" aria-label="Tugas pada tanggal">
+      <div class="flex max-h-[85vh] w-full max-w-md flex-col rounded-t-3xl bg-white dark:bg-[#241216] shadow-2xl sm:rounded-3xl"
+           x-show="dayModalOpen"
+           x-transition:enter="transition ease-out duration-200" x-transition:enter-start="translate-y-6 opacity-0" x-transition:enter-end="translate-y-0 opacity-100">
+        <div class="flex items-start justify-between gap-3 border-b border-rose-100 dark:border-[#45222a] p-5">
+          <div class="flex items-center gap-3">
+            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-maroon dark:bg-[#9a1f3d] text-white">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>
+            </div>
+            <div>
+              <h3 class="text-base font-semibold text-stone-800 dark:text-stone-100" x-text="formatDateLong(selectedDate)"></h3>
+              <p class="text-xs text-stone-500 dark:text-stone-400" x-text="dayTasks.length + ' tugas'"></p>
+            </div>
+          </div>
+          <button type="button" @click="closeDay()" aria-label="Tutup"
+                  class="rounded-xl p-2 text-stone-400 dark:text-stone-500 transition hover:bg-rose-100 dark:hover:bg-[#45222a] hover:text-maroon dark:hover:text-rose-300">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <div x-show="daySpecials.length > 0" class="flex items-center gap-2 border-b border-rose-100 dark:border-[#45222a] bg-rose-50 dark:bg-[#331a1f] px-5 py-2.5 text-sm font-semibold text-maroon dark:text-rose-300">
+          <svg class="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z" /></svg>
+          <span x-text="daySpecials.join(' · ')"></span>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-5">
+          <ul class="space-y-3">
+            <template x-for="task in dayTasks" :key="task.id">
+              <li :data-task-id="task.id" class="flex items-start gap-3 rounded-2xl bg-rose-50/60 dark:bg-[#331a1f]/60 p-3 ring-1 ring-rose-100 dark:ring-[#45222a]">
+                <button type="button" @click="toggle(task)" :aria-pressed="task.completed"
+                        :aria-label="task.completed ? 'Tandai belum selesai' : 'Tandai selesai'"
+                        class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition"
+                        :class="task.completed ? 'border-maroon dark:border-rose-400 bg-maroon dark:bg-[#9a1f3d] text-white' : 'border-rose-300 bg-white dark:bg-[#241216] hover:border-maroon dark:hover:border-rose-400'">
+                  <svg x-show="task.completed" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                </button>
+                <div class="min-w-0 flex-1">
+                  <p class="break-words text-sm font-medium" :class="task.completed ? 'text-stone-400 dark:text-stone-500 line-through' : 'text-stone-800 dark:text-stone-100'" x-text="task.title"></p>
+                  <p x-show="task.notes" class="mt-0.5 break-words text-xs text-stone-500 dark:text-stone-400" x-text="task.notes"></p>
+                <ul x-show="task.subtasks && task.subtasks.length" class="mt-2 space-y-1">
+                  <template x-for="s in task.subtasks" :key="s.id">
+                    <li>
+                      <button type="button" @click="toggleSub(task, s)" :aria-pressed="s.done"
+                              class="flex w-full items-start gap-2 text-left text-xs transition"
+                              :class="s.done ? 'text-stone-400 dark:text-stone-500' : 'text-stone-600 dark:text-stone-300'">
+                        <span class="mt-px grid h-4 w-4 shrink-0 place-items-center rounded-full border-2 transition"
+                              :class="s.done ? 'border-maroon dark:border-rose-400 bg-maroon dark:bg-[#9a1f3d] text-white' : 'border-rose-300 bg-white dark:bg-[#241216]'">
+                          <svg x-show="s.done" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="3.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        </span>
+                        <span class="min-w-0 break-words" :class="s.done ? 'line-through' : ''" x-text="s.title"></span>
+                      </button>
+                    </li>
+                  </template>
+                </ul>
+                  <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold" :class="priorityBadge(task.priority)">
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v1.5M3 21v-6m0 0l2.77-.693a9 9 0 016.208.682l.108.054a9 9 0 006.086.71l3.114-.732a48.524 48.524 0 01-.005-10.499l-3.11.732a9 9 0 01-6.085-.711l-.108-.054a9 9 0 00-6.208-.682L3 4.5M3 15V4.5" /></svg>
+                      <span x-text="priorityLabel(task.priority)"></span>
+                    </span>
+                    <span class="inline-flex items-center gap-1 rounded-full bg-white dark:bg-[#241216] px-2.5 py-0.5 text-[11px] font-medium text-maroon dark:text-rose-300 ring-1 ring-rose-200 dark:ring-[#5a2c36]">
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" /><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z" /></svg>
+                      <span x-text="task.category"></span>
+                    </span>
+                    <span x-show="task.completed" class="inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-500/20 px-2.5 py-0.5 text-[11px] font-medium text-emerald-800 dark:text-emerald-300">
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      Selesai
+                    </span>
+                    <span x-show="task.time" class="inline-flex items-center gap-1 rounded-full bg-white dark:bg-[#241216] px-2.5 py-0.5 text-[11px] font-medium text-stone-600 dark:text-stone-300 ring-1 ring-stone-200 dark:ring-[#5a2c36]">
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <span x-text="task.time"></span>
+                    </span>
+                    <span x-show="task.repeat && task.repeat !== 'none'" class="inline-flex items-center gap-1 rounded-full bg-white dark:bg-[#241216] px-2.5 py-0.5 text-[11px] font-medium text-maroon dark:text-rose-300 ring-1 ring-rose-200 dark:ring-[#5a2c36]">
+                      <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                      <span x-text="repeatLabel(task.repeat)"></span>
+                    </span>
+                  <span x-show="task.subtasks && task.subtasks.length" class="inline-flex items-center gap-1 rounded-full bg-white dark:bg-[#241216] ring-1 ring-rose-200 dark:ring-[#5a2c36] px-2.5 py-0.5 text-[11px] font-medium text-maroon dark:text-rose-300">
+                    <svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <span x-text="subDone(task) + '/' + task.subtasks.length"></span>
+                  </span>
+                    <span x-show="isOverdue(task)" class="inline-flex items-center gap-1 rounded-full bg-red-100 dark:bg-red-500/20 px-2.5 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-300">Terlambat</span>
+                  </div>
+                </div>
+                <div class="flex shrink-0 items-center gap-0.5">
+                  <button type="button" x-show="!task.completed" @click="snooze(task)" aria-label="Tunda ke besok" title="Tunda ke besok"
+                        class="rounded-xl p-2 text-stone-400 dark:text-stone-500 transition hover:bg-white dark:hover:bg-[#331a1f] hover:text-maroon dark:hover:text-rose-300 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60">
+                  <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 010 1.954l-7.108 4.061A1.125 1.125 0 013 16.811V8.69zM12.75 8.689c0-.864.933-1.406 1.683-.977l7.108 4.061a1.125 1.125 0 010 1.954l-7.108 4.061a1.125 1.125 0 01-1.683-.977V8.689z" /></svg>
+                </button>
+                <button type="button" @click="startEdit(task)" aria-label="Edit tugas"
+                          class="rounded-xl p-2 text-stone-400 dark:text-stone-500 transition hover:bg-white dark:hover:bg-[#331a1f] hover:text-maroon dark:hover:text-rose-300">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+                  </button>
+                  <button type="button" @click="remove(task)" aria-label="Hapus tugas"
+                          class="rounded-xl p-2 text-stone-400 dark:text-stone-500 transition hover:bg-white dark:hover:bg-[#331a1f] hover:text-red-600 dark:hover:text-red-400">
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                  </button>
+                </div>
+              </li>
+            </template>
+          </ul>
+
+          <div x-show="dayTasks.length === 0" class="py-8 text-center">
+            <div class="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-full bg-rose-100 dark:bg-[#45222a] text-maroon dark:text-rose-300">
+              <svg class="h-7 w-7" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            </div>
+            <p class="font-semibold text-maroon dark:text-rose-300">Hari yang lega</p>
+            <p class="mt-1 text-sm text-stone-500 dark:text-stone-400">Belum ada tugas di tanggal ini.</p>
+          </div>
+        </div>
+
+        <div class="border-t border-rose-100 dark:border-[#45222a] p-4">
+          <button type="button" @click="openAddForm(selectedDate)"
+                  class="flex w-full items-center justify-center gap-2 rounded-2xl bg-maroon dark:bg-[#9a1f3d] px-5 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-maroon-dark dark:hover:bg-[#b3264a] active:scale-[.98]">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+            Tambah tugas di tanggal ini
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Form tambah / edit tugas -->
+    <div x-show="formModalOpen" x-transition.opacity style="display:none"
+         class="fixed inset-0 z-50 flex items-end justify-center bg-stone-900/50 sm:items-center sm:p-4"
+         @click.self="closeForm()" role="dialog" aria-modal="true" aria-label="Form tugas">
+      <div class="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-3xl bg-white dark:bg-[#241216] p-5 shadow-2xl sm:rounded-3xl"
+           x-show="formModalOpen"
+           x-transition:enter="transition ease-out duration-200" x-transition:enter-start="translate-y-6 opacity-0" x-transition:enter-end="translate-y-0 opacity-100">
+        <div class="mb-4 flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <div class="grid h-10 w-10 place-items-center rounded-xl bg-rose-100 dark:bg-[#45222a] text-maroon dark:text-rose-300">
+              <svg x-show="!editingId" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+              <svg x-show="editingId" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" /></svg>
+            </div>
+            <h3 class="text-base font-semibold text-stone-800 dark:text-stone-100" x-text="editingId ? 'Edit Tugas' : 'Tambah Tugas Baru'"></h3>
+          </div>
+          <button type="button" @click="closeForm()" aria-label="Tutup"
+                  class="rounded-xl p-2 text-stone-400 dark:text-stone-500 transition hover:bg-rose-100 dark:hover:bg-[#45222a] hover:text-maroon dark:hover:text-rose-300">
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+
+        <form @submit.prevent="submit()" class="space-y-3" novalidate>
+          <div>
+            <label for="title" class="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">Judul tugas</label>
+            <div class="relative">
+              <svg class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-maroon/60 dark:text-rose-300/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              <input id="title" type="text" x-model="form.title" x-ref="titleInput" maxlength="120"
+                     placeholder="Apa yang ingin kamu selesaikan?"
+                     class="w-full rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm placeholder:text-stone-400 dark:placeholder:text-stone-500 transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60"
+                     :class="error ? 'border-red-400' : ''" />
+            </div>
+            <p x-show="error" x-text="error" class="mt-1.5 text-xs text-red-600 dark:text-red-400" role="alert"></p>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label for="date" class="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">Tanggal</label>
+            <div class="relative">
+              <svg class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-maroon/60 dark:text-rose-300/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>
+              <input id="date" type="date" x-model="form.date"
+                     class="w-full rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60" />
+            </div>
+          </div>
+          <div>
+            <label for="time" class="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">Jam (opsional)</label>
+            <div class="relative">
+              <svg class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-maroon/60 dark:text-rose-300/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              <input id="time" type="time" x-model="form.time"
+                     class="w-full rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60" />
+            </div>
+          </div>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label for="priority" class="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">Prioritas</label>
+              <div class="relative">
+                <svg class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-maroon/60 dark:text-rose-300/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v1.5M3 21v-6m0 0l2.77-.693a9 9 0 016.208.682l.108.054a9 9 0 006.086.71l3.114-.732a48.524 48.524 0 01-.005-10.499l-3.11.732a9 9 0 01-6.085-.711l-.108-.054a9 9 0 00-6.208-.682L3 4.5M3 15V4.5" /></svg>
+                <select id="priority" x-model="form.priority"
+                        class="w-full rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60">
+                  <template x-for="p in priorities" :key="p.value">
+                    <option :value="p.value" x-text="p.label"></option>
+                  </template>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label for="category" class="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">Kategori</label>
+              <div class="relative">
+                <svg class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-maroon/60 dark:text-rose-300/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" /><path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z" /></svg>
+                <input id="category" type="text" x-model="form.category" list="category-list" maxlength="30"
+                       placeholder="mis. Kerja"
+                       class="w-full rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm placeholder:text-stone-400 dark:placeholder:text-stone-500 transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60" />
+              </div>
+              <datalist id="category-list">
+                <template x-for="c in categories" :key="c"><option :value="c"></option></template>
+                <option value="Kerja"></option>
+                <option value="Pribadi"></option>
+                <option value="Belajar"></option>
+              </datalist>
+            </div>
+          </div>
+
+          <div>
+            <label for="repeat" class="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">Pengulangan</label>
+            <div class="relative">
+              <svg class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-maroon/60 dark:text-rose-300/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+              <select id="repeat" x-model="form.repeat"
+                      class="w-full rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60">
+                <template x-for="r in repeatOptions" :key="r.value">
+                  <option :value="r.value" x-text="r.label"></option>
+                </template>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label for="notes" class="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">Catatan (opsional)</label>
+            <div class="relative">
+              <svg class="pointer-events-none absolute left-4 top-4 h-5 w-5 text-maroon/60 dark:text-rose-300/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" /></svg>
+              <textarea id="notes" x-model="form.notes" rows="3" maxlength="500" placeholder="Detail tambahan, link, atau catatan kecil..."
+                        class="w-full resize-none rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm placeholder:text-stone-400 dark:placeholder:text-stone-500 transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60"></textarea>
+            </div>
+          </div>
+
+          <div>
+            <label for="subtask" class="mb-1 block text-xs font-medium text-stone-500 dark:text-stone-400">Subtugas / checklist (opsional)</label>
+            <ul x-show="form.subtasks.length > 0" class="mb-2 space-y-1.5">
+              <template x-for="s in form.subtasks" :key="s.id">
+                <li class="flex items-center gap-2 rounded-xl bg-rose-50 dark:bg-[#331a1f] px-3 py-2">
+                  <button type="button" @click="s.done = !s.done" :aria-pressed="s.done" aria-label="Tandai subtugas"
+                          class="grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 transition"
+                          :class="s.done ? 'border-maroon dark:border-rose-400 bg-maroon dark:bg-[#9a1f3d] text-white' : 'border-rose-300 bg-white dark:bg-[#241216]'">
+                    <svg x-show="s.done" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="3.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  </button>
+                  <span class="min-w-0 flex-1 break-words text-sm" :class="s.done ? 'text-stone-400 dark:text-stone-500 line-through' : 'text-stone-700 dark:text-stone-200'" x-text="s.title"></span>
+                  <button type="button" @click="removeSubtask(s.id)" aria-label="Hapus subtugas"
+                          class="rounded-lg p-1 text-stone-400 dark:text-stone-500 transition hover:text-red-600 dark:hover:text-red-400">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </li>
+              </template>
+            </ul>
+            <div class="flex gap-2">
+              <div class="relative min-w-0 flex-1">
+                <svg class="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-maroon/60 dark:text-rose-300/60" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                <input id="subtask" type="text" x-model="form.newSubtask" @keydown.enter.prevent="addSubtask()" maxlength="80"
+                       placeholder="Tambah langkah, lalu Enter"
+                       class="w-full rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] py-3 pl-12 pr-4 text-sm placeholder:text-stone-400 dark:placeholder:text-stone-500 transition focus:border-maroon dark:focus:border-rose-400 focus:outline-none focus:ring-4 focus:ring-rose-100 dark:focus:ring-[#5a2c36]/60" />
+              </div>
+              <button type="button" @click="addSubtask()"
+                      class="shrink-0 rounded-2xl bg-rose-100 dark:bg-[#45222a] px-4 text-sm font-semibold text-maroon dark:text-rose-300 transition hover:bg-rose-200 dark:hover:bg-[#5a2c36]">Tambah</button>
+            </div>
+          </div>
+
+          <div class="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+            <button type="button" @click="closeForm()"
+                    class="rounded-2xl border border-rose-200 dark:border-[#5a2c36] bg-white dark:bg-[#241216] px-5 py-3 text-sm font-semibold text-maroon dark:text-rose-300 transition hover:bg-rose-100 dark:hover:bg-[#45222a]">
+              Batal
+            </button>
+            <button type="submit"
+                    class="inline-flex items-center justify-center gap-2 rounded-2xl bg-maroon dark:bg-[#9a1f3d] px-6 py-3 text-sm font-semibold text-white shadow-soft transition hover:bg-maroon-dark dark:hover:bg-[#b3264a] focus:outline-none focus:ring-4 focus:ring-rose-200 dark:focus:ring-[#5a2c36] active:scale-[.98]">
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+              <span x-text="editingId ? 'Simpan Perubahan' : 'Tambah Tugas'"></span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Hati melayang saat semua tugas selesai -->
+    <div class="pointer-events-none fixed inset-0 z-[70] overflow-hidden" aria-hidden="true">
+      <template x-for="h in hearts" :key="h.id">
+        <svg class="heart-float absolute text-rose-500" viewBox="0 0 24 24" fill="currentColor"
+             :style="`left:${h.left}%; bottom:-30px; width:${h.size}px; height:${h.size}px; animation-delay:${h.delay}s; animation-duration:${h.dur}s`"><path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.688 3A5.5 5.5 0 0112 5.052 5.5 5.5 0 0116.313 3c2.973 0 5.437 2.322 5.437 5.25 0 3.925-2.438 7.111-4.739 9.256a25.175 25.175 0 01-4.244 3.17 15.247 15.247 0 01-.383.219l-.022.012-.007.004-.003.001a.752.752 0 01-.704 0l-.003-.001z" /></svg>
+      </template>
+    </div>
+
+    <!-- Toast -->
+    <div class="pointer-events-none fixed inset-x-0 bottom-4 z-[60] flex flex-col items-center gap-2 px-4" aria-live="polite">
+      <template x-for="toast in toasts" :key="toast.id">
+        <div class="pointer-events-auto flex max-w-sm items-center gap-3 rounded-2xl bg-stone-900 dark:bg-[#45222a] px-4 py-3 text-sm text-white shadow-2xl"
+             x-transition:enter="transition ease-out duration-200" x-transition:enter-start="translate-y-3 opacity-0" x-transition:enter-end="translate-y-0 opacity-100">
+          <span x-text="toast.message"></span>
+          <button type="button" x-show="toast.undo" @click="undoToast(toast)"
+                  class="rounded-lg px-2 py-1 text-xs font-bold uppercase tracking-wide text-rose-200 transition hover:bg-white/10">Undo</button>
+        </div>
+      </template>
+    </div>
+
+    <footer class="mt-10 text-center text-xs text-stone-400 dark:text-stone-500">
+      Data tersimpan otomatis di perangkat kamu (LocalStorage). Backup lewat menu titik tiga. Pintasan: <kbd class="rounded bg-rose-100 dark:bg-[#45222a] px-1.5 py-0.5 font-sans text-[11px] font-semibold text-maroon dark:text-rose-300">N</kbd> tambah tugas, <kbd class="rounded bg-rose-100 dark:bg-[#45222a] px-1.5 py-0.5 font-sans text-[11px] font-semibold text-maroon dark:text-rose-300">/</kbd> cari, <kbd class="rounded bg-rose-100 dark:bg-[#45222a] px-1.5 py-0.5 font-sans text-[11px] font-semibold text-maroon dark:text-rose-300">Esc</kbd> tutup.
+    </footer>
+    </div><!-- /pembungkus konten -->
+  </div>
+
+  <!-- Panel darurat: tetap terlihat walau aplikasi gagal dimuat -->
+  <div id="boot-panel" style="display:none;position:fixed;left:12px;right:12px;bottom:12px;z-index:99999;background:#fff;color:#4a0e1c;border:2px solid #7f1d1d;border-radius:14px;padding:14px;font:14px/1.4 system-ui,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.3)">
+    <div style="font-weight:700;margin-bottom:4px" id="boot-title">Aplikasi bermasalah</div>
+    <div id="boot-msg" style="font-size:12px;opacity:.85;word-break:break-word;max-height:90px;overflow:auto"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button type="button" id="boot-reload" style="background:#7f1d1d;color:#fff;border:0;border-radius:10px;padding:8px 12px;font-weight:600">Muat ulang</button>
+      <button type="button" id="boot-reset" style="background:#fde8ea;color:#7f1d1d;border:0;border-radius:10px;padding:8px 12px;font-weight:600">Reset data aplikasi</button>
+      <button type="button" id="boot-close" style="background:transparent;color:#7f1d1d;border:0;padding:8px 6px">Tutup</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var panel = document.getElementById('boot-panel');
+      var dismissed = false;
+      function root() { return document.querySelector('[x-data]'); }
+      function booted() { var r = root(); return !!window.Alpine && r && !r.hasAttribute('x-cloak'); }
+      window.__showBootPanel = function () {
+        if (dismissed) return;
+        document.getElementById('boot-title').textContent = booted() ? 'Terjadi error kecil' : 'Aplikasi gagal dimuat';
+        document.getElementById('boot-msg').textContent = window.__bootErrors.length
+          ? window.__bootErrors.slice(-3).join(' | ')
+          : 'Alpine.js belum termuat. Periksa koneksi internet lalu muat ulang.';
+        panel.style.display = 'block';
+      };
+      document.getElementById('boot-reload').onclick = function () { location.reload(); };
+      document.getElementById('boot-close').onclick = function () { dismissed = true; panel.style.display = 'none'; };
+      document.getElementById('boot-reset').onclick = function () {
+        try {
+          Object.keys(localStorage).filter(function (k) { return k.indexOf('maroon-todo:') === 0; })
+            .forEach(function (k) { localStorage.removeItem(k); });
+        } catch (e) {}
+        location.reload();
+      };
+
+      // Muat Alpine dengan cadangan CDN
+      var urls = [
+        'https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js',
+        'https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.14.1/cdn.min.js'
+      ];
+      (function load(i) {
+        if (window.Alpine) return;
+        if (i >= urls.length) { window.__bootErrors.push('Alpine.js tidak bisa diunduh dari CDN manapun'); window.__showBootPanel(); return; }
+        var sc = document.createElement('script');
+        sc.src = urls[i];
+        sc.onerror = function () { sc.remove(); load(i + 1); };
+        document.head.appendChild(sc);
+      })(0);
+
+      // Pengawas: jika setelah 7 detik aplikasi masih tersembunyi, tampilkan panel
+      setTimeout(function () { if (!booted()) window.__showBootPanel(); }, 7000);
+    })();
+  </script>
+</body>
+</html>
